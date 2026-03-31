@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portal de Galeria e Programas</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <header class="hero">
+    <div class="hero__text">
+      <p class="eyebrow">Flask + MongoDB Atlas + GridFS</p>
+      <h1>Portal de Galeria de Fotos e Programas com Senha</h1>
+      <p class="hero__subtitle">
+        Sistema completo para mostrar fotos da escola, proteger a área de programas por senha
+        e liberar a gestão para cadastrar, editar e excluir conteúdos.
+      </p>
+      <div class="hero__actions">
+        <button class="btn btn-primary" id="btnAbrirProgramas">Entrar nos programas</button>
+        <button class="btn btn-secondary" id="btnAbrirGestao">Entrar na gestão</button>
+        <button class="btn btn-ghost hidden" id="btnLogout">Sair</button>
+      </div>
+    </div>
+    <div class="hero__card">
+      <div class="status-grid">
+        <div class="status-box">
+          <span>Banco</span>
+          <strong id="statusBanco">Verificando...</strong>
+        </div>
+        <div class="status-box">
+          <span>Programas</span>
+          <strong id="statusProgramas">Bloqueados</strong>
+        </div>
+        <div class="status-box">
+          <span>Gestão</span>
+          <strong id="statusGestao">Bloqueada</strong>
+        </div>
+      </div>
+      <p class="hero__hint">
+        Você pode deixar a galeria pública e liberar somente os programas e a gestão com senhas diferentes.
+      </p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel-gallery">
+      <div class="panel__header">
+        <div>
+          <p class="panel__tag">Fotos</p>
+          <h2>Galeria</h2>
+        </div>
+        <input type="search" id="buscaGaleria" placeholder="Pesquisar fotos..." />
+      </div>
+
+      <div class="notice hidden" id="mensagemGaleria"></div>
+
+      <div class="admin-box hidden" id="blocoUpload">
+        <div class="admin-box__title">
+          <h3>Enviar fotos</h3>
+          <span class="pill">Gestão</span>
+        </div>
+        <form id="formGaleria">
+          <div class="grid-2">
+            <div class="field">
+              <label for="fotoTitulo">Título base</label>
+              <input id="fotoTitulo" type="text" placeholder="Ex.: Feira de Robótica" />
+            </div>
+            <div class="field">
+              <label for="fotoCategoria">Categoria</label>
+              <input id="fotoCategoria" type="text" placeholder="Ex.: Evento escolar" />
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="fotoAutor">Responsável</label>
+              <input id="fotoAutor" type="text" placeholder="Ex.: Renato" />
+            </div>
+            <div class="field">
+              <label for="fotoArquivos">Imagens (até 15)</label>
+              <input id="fotoArquivos" type="file" accept="image/*" multiple />
+            </div>
+          </div>
+          <div class="field">
+            <label for="fotoDescricao">Descrição</label>
+            <textarea id="fotoDescricao" rows="3" placeholder="Descreva o momento registrado"></textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Enviar fotos</button>
+        </form>
+      </div>
+
+      <div class="gallery-grid" id="galeriaLista"></div>
+    </section>
+
+    <section class="panel panel-programs">
+      <div class="panel__header panel__header--stack">
+        <div>
+          <p class="panel__tag">Programas</p>
+          <h2>Área protegida</h2>
+          <p class="muted">A lista abaixo só aparece após informar a senha correta. Agora o texto pode ser salvo com a formatação preservada.</p>
+        </div>
+        <input type="search" id="buscaProgramas" class="hidden" placeholder="Pesquisar programas..." />
+      </div>
+
+      <div class="notice hidden" id="mensagemProgramas"></div>
+
+      <div class="lock-box" id="blocoBloqueado">
+        <div class="lock-icon">🔒</div>
+        <h3>Programas bloqueados</h3>
+        <p>Digite a senha da área de programas para visualizar os links cadastrados.</p>
+        <button class="btn btn-primary" id="btnAbrirProgramas2">Desbloquear programas</button>
+      </div>
+
+      <div class="admin-box hidden" id="blocoCadastroPrograma">
+        <div class="admin-box__title">
+          <h3 id="tituloProgramaForm">Cadastrar programa</h3>
+          <div class="admin-actions">
+            <span class="pill">Gestão</span>
+            <button type="button" class="btn btn-ghost hidden" id="btnCancelarEdicaoPrograma">Cancelar edição</button>
+            <button type="button" class="btn btn-secondary" id="btnCriarExemplos">Criar exemplos</button>
+          </div>
+        </div>
+        <form id="formPrograma">
+          <input type="hidden" id="programaId" />
+          <div class="grid-2">
+            <div class="field">
+              <label for="programaTitulo">Título *</label>
+              <input id="programaTitulo" type="text" required placeholder="Ex.: Sistema de Ocorrências" />
+            </div>
+            <div class="field">
+              <label for="programaCategoria">Categoria</label>
+              <input id="programaCategoria" type="text" placeholder="Ex.: Gestão escolar" />
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="programaLink">Link do programa</label>
+              <input id="programaLink" type="url" placeholder="https://... (opcional)" />
+            </div>
+            <div class="field">
+              <label for="programaSenha">Senha individual do programa</label>
+              <input id="programaSenha" type="text" placeholder="Opcional" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="programaDescricao">Conteúdo / texto do programa</label>
+            <textarea id="programaDescricao" rows="10" spellcheck="false" placeholder="Cole aqui o texto, código ou conteúdo do TXT. O sistema vai manter as quebras de linha e a formatação."></textarea>
+            <p class="field__hint">Você pode salvar só o link, só o texto, ou os dois juntos.</p>
+          </div>
+          <button class="btn btn-primary" type="submit" id="btnSalvarPrograma">Salvar programa</button>
+        </form>
+      </div>
+
+      <div class="program-grid hidden" id="programasLista"></div>
+    </section>
+  </main>
+
+  <div class="modal hidden" id="modalSenhaProgramas">
+    <div class="modal__box">
+      <button class="modal__close" data-close="#modalSenhaProgramas">×</button>
+      <h3>Senha da área de programas</h3>
+      <p>Digite a senha geral para liberar a lista de programas.</p>
+      <form id="formSenhaProgramas">
+        <div class="field">
+          <label for="senhaProgramas">Senha</label>
+          <input id="senhaProgramas" type="password" required />
+        </div>
+        <button class="btn btn-primary" type="submit">Entrar</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modalSenhaGestao">
+    <div class="modal__box">
+      <button class="modal__close" data-close="#modalSenhaGestao">×</button>
+      <h3>Senha da gestão</h3>
+      <p>Ao entrar na gestão, você libera upload, cadastro, edição e exclusão.</p>
+      <form id="formSenhaGestao">
+        <div class="field">
+          <label for="senhaGestao">Senha</label>
+          <input id="senhaGestao" type="password" required />
+        </div>
+        <button class="btn btn-primary" type="submit">Entrar na gestão</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modalSenhaIndividual">
+    <div class="modal__box">
+      <button class="modal__close" data-close="#modalSenhaIndividual">×</button>
+      <h3>Senha individual do programa</h3>
+      <p>Esse programa possui uma senha própria além da senha geral da área.</p>
+      <form id="formSenhaIndividual">
+        <input type="hidden" id="programaSenhaId" />
+        <div class="field">
+          <label for="senhaIndividualPrograma">Senha</label>
+          <input id="senhaIndividualPrograma" type="password" required />
+        </div>
+        <button class="btn btn-primary" type="submit">Abrir programa</button>
+      </form>
+    </div>
+  </div>
+
+
+  <div class="modal hidden" id="modalConteudoPrograma">
+    <div class="modal__box modal__box--wide">
+      <button class="modal__close" data-close="#modalConteudoPrograma">×</button>
+      <h3 id="conteudoProgramaTitulo">Conteúdo do programa</h3>
+      <p class="muted">O texto abaixo é mostrado com a mesma organização do conteúdo colado.</p>
+      <pre id="conteudoProgramaCompleto" class="program-content-viewer"></pre>
+    </div>
+  </div>
+
+  <template id="templateFoto">
+    <article class="photo-card">
+      <div class="photo-card__image-wrap">
+        <img class="photo-card__image" alt="Foto da galeria" />
+      </div>
+      <div class="photo-card__body">
+        <div>
+          <h3 class="photo-card__title"></h3>
+          <p class="photo-card__meta"></p>
+        </div>
+        <p class="photo-card__desc"></p>
+        <div class="photo-card__actions hidden admin-only-actions">
+          <button class="btn btn-danger btnExcluirFoto">Excluir foto</button>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <template id="templatePrograma">
+    <article class="program-card">
+      <div class="program-card__top">
+        <span class="pill pill-blue program-card__category"></span>
+        <span class="pill pill-yellow hidden program-card__lock">Senha individual</span>
+      </div>
+      <h3 class="program-card__title"></h3>
+      <p class="program-card__desc"></p>
+      <div class="program-card__bottom">
+        <button class="btn btn-primary btnAbrirPrograma">Abrir link</button>
+        <button class="btn btn-secondary btnVerTextoPrograma hidden">Ver texto</button>
+        <div class="program-card__admin hidden admin-only-actions">
+          <button class="btn btn-secondary btnEditarPrograma">Editar</button>
+          <button class="btn btn-danger btnExcluirPrograma">Excluir</button>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
