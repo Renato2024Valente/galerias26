@@ -56,3 +56,16 @@ http://127.0.0.1:5000
 ## Observação
 
 As fotos ficam salvas no MongoDB usando GridFS, então não dependem de pasta local.
+
+
+## Deploy na Vercel
+
+Defina estas variáveis no painel da Vercel e depois faça um novo deploy:
+
+- MONGO_URI
+- MONGO_DB
+- SECRET_KEY
+- ADMIN_PASSWORD
+- PROGRAMS_PASSWORD
+
+Observação: alterações em variáveis de ambiente na Vercel só entram em um novo deploy.

@@ -1,18 +1,11 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from urllib.parse import quote_plus
 
 from bson import ObjectId
 from dotenv import load_dotenv
-from flask import (
-    Flask,
-    jsonify,
-    render_template,
-    request,
-    session,
-    send_file,
-)
+from flask import Flask, jsonify, render_template, request, session, send_file, g
 from gridfs import GridFS
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
@@ -24,11 +17,16 @@ app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
 app.secret_key = os.getenv("SECRET_KEY", "troque-esta-chave-no-env")
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(16 * 1024 * 1024)))
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+if os.getenv("VERCEL") or os.getenv("FLASK_ENV") == "production":
+    app.config["SESSION_COOKIE_SECURE"] = True
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 MAX_FILES_PER_UPLOAD = int(os.getenv("MAX_FILES_PER_UPLOAD", "15"))
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Roberto1243")
-PROGRAMS_PASSWORD = os.getenv("PROGRAMS_PASSWORD", "Aluno1243")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "1234")
+PROGRAMS_PASSWORD = os.getenv("PROGRAMS_PASSWORD", "5678")
 MONGO_DB_NAME = os.getenv("MONGO_DB", "arquivos2026")
 PROGRAMS_COLLECTION = os.getenv("PROGRAMS_COLLECTION", "programas")
 GALLERY_COLLECTION = os.getenv("GALLERY_COLLECTION", "fotos")
@@ -40,7 +38,7 @@ def get_mongo_uri() -> str:
         placeholders = ["SEU_USUARIO", "SUA_SENHA_CODIFICADA", "SEU_HOST", "seu_host"]
         if any(item in full_uri for item in placeholders):
             raise RuntimeError(
-                "Seu .env ainda está com texto de exemplo. Troque pelos dados reais do MongoDB Atlas."
+                "Seu ambiente ainda está com texto de exemplo. Troque pelos dados reais do MongoDB Atlas."
             )
         return full_uri
 
@@ -52,7 +50,7 @@ def get_mongo_uri() -> str:
 
     if not all([user, password, host]):
         raise RuntimeError(
-            "Defina MONGO_URI no .env ou informe MONGO_USER, MONGO_PASSWORD e MONGO_HOST."
+            "Defina MONGO_URI no ambiente da Vercel ou informe MONGO_USER, MONGO_PASSWORD e MONGO_HOST."
         )
 
     if host.lower() in {"seu_host", "mongodb.net", "cluster.mongodb.net"}:
@@ -67,12 +65,26 @@ def get_mongo_uri() -> str:
     )
 
 
-mongo_uri = get_mongo_uri()
-client = MongoClient(mongo_uri, serverSelectionTimeoutMS=10000)
-db = client[MONGO_DB_NAME]
-programs = db[PROGRAMS_COLLECTION]
-gallery_meta = db[GALLERY_COLLECTION]
-fs = GridFS(db, collection="galeria_arquivos")
+def get_mongo_parts():
+    if "mongo_parts" not in g:
+        mongo_uri = get_mongo_uri()
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=10000)
+        db = client[MONGO_DB_NAME]
+        g.mongo_parts = {
+            "client": client,
+            "db": db,
+            "programs": db[PROGRAMS_COLLECTION],
+            "gallery_meta": db[GALLERY_COLLECTION],
+            "fs": GridFS(db, collection="galeria_arquivos"),
+        }
+    return g.mongo_parts
+
+
+@app.teardown_appcontext
+def close_mongo(_exception=None):
+    parts = g.pop("mongo_parts", None)
+    if parts and parts.get("client"):
+        parts["client"].close()
 
 
 @app.errorhandler(413)
@@ -80,9 +92,29 @@ def file_too_large(_error):
     return jsonify({"erro": "Arquivo muito grande para envio."}), 413
 
 
+@app.errorhandler(RuntimeError)
+def handle_runtime_error(error):
+    return jsonify({"erro": str(error)}), 500
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/status")
+def status():
+    try:
+        parts = get_mongo_parts()
+        parts["client"].admin.command("ping")
+        return jsonify({"ok": True, "mensagem": "MongoDB conectado com sucesso."})
+    except Exception as e:
+        return jsonify({"ok": False, "mensagem": str(e)}), 500
+
+
+@app.route("/api/session")
+def session_info():
+    return jsonify({"admin_ok": is_admin(), "programs_ok": can_access_programs()})
 
 
 def serializar_programa(doc: dict) -> dict:
@@ -146,25 +178,6 @@ def require_program_access():
     return None
 
 
-@app.route("/api/status")
-def status():
-    try:
-        client.admin.command("ping")
-        return jsonify({"ok": True, "mensagem": "MongoDB conectado com sucesso."})
-    except Exception as e:
-        return jsonify({"ok": False, "mensagem": str(e)}), 500
-
-
-@app.route("/api/session")
-def session_info():
-    return jsonify(
-        {
-            "admin_ok": is_admin(),
-            "programs_ok": can_access_programs(),
-        }
-    )
-
-
 @app.route("/api/auth/admin", methods=["POST"])
 def login_admin():
     dados = request.get_json(silent=True) or {}
@@ -173,8 +186,11 @@ def login_admin():
     if senha != ADMIN_PASSWORD:
         return jsonify({"erro": "Senha da gestão incorreta."}), 401
 
+    session.clear()
+    session.permanent = True
     session["admin_ok"] = True
     session["programs_ok"] = True
+    session.modified = True
     return jsonify({"mensagem": "Gestão liberada com sucesso."})
 
 
@@ -186,13 +202,16 @@ def login_programs():
     if senha != PROGRAMS_PASSWORD:
         return jsonify({"erro": "Senha da área de programas incorreta."}), 401
 
+    session.permanent = True
     session["programs_ok"] = True
+    session.modified = True
     return jsonify({"mensagem": "Área de programas liberada com sucesso."})
 
 
 @app.route("/api/logout", methods=["POST"])
 def logout():
     session.clear()
+    session.modified = True
     return jsonify({"mensagem": "Sessão encerrada."})
 
 
@@ -210,7 +229,7 @@ def listar_galeria():
             ]
         }
 
-    docs = gallery_meta.find(filtro).sort("created_at", -1)
+    docs = get_mongo_parts()["gallery_meta"].find(filtro).sort("created_at", -1)
     return jsonify([serializar_foto(doc) for doc in docs])
 
 
@@ -234,6 +253,9 @@ def enviar_galeria():
 
     salvos = []
     agora = datetime.utcnow().isoformat()
+    parts = get_mongo_parts()
+    fs = parts["fs"]
+    gallery_meta = parts["gallery_meta"]
 
     for idx, arquivo in enumerate(arquivos, start=1):
         if not arquivo or not arquivo.filename:
@@ -273,14 +295,14 @@ def enviar_galeria():
 @app.route("/foto/<foto_id>")
 def obter_foto(foto_id):
     try:
-        doc = gallery_meta.find_one({"_id": ObjectId(foto_id)})
+        doc = get_mongo_parts()["gallery_meta"].find_one({"_id": ObjectId(foto_id)})
     except Exception:
         return jsonify({"erro": "ID de foto inválido."}), 400
 
     if not doc:
         return jsonify({"erro": "Foto não encontrada."}), 404
 
-    arquivo = fs.get(doc["gridfs_id"])
+    arquivo = get_mongo_parts()["fs"].get(doc["gridfs_id"])
     return send_file(
         BytesIO(arquivo.read()),
         mimetype=doc.get("content_type", "application/octet-stream"),
@@ -294,8 +316,9 @@ def excluir_foto(foto_id):
     if auth_error:
         return auth_error
 
+    parts = get_mongo_parts()
     try:
-        doc = gallery_meta.find_one({"_id": ObjectId(foto_id)})
+        doc = parts["gallery_meta"].find_one({"_id": ObjectId(foto_id)})
     except Exception:
         return jsonify({"erro": "ID de foto inválido."}), 400
 
@@ -303,11 +326,11 @@ def excluir_foto(foto_id):
         return jsonify({"erro": "Foto não encontrada."}), 404
 
     try:
-        fs.delete(doc["gridfs_id"])
+        parts["fs"].delete(doc["gridfs_id"])
     except Exception:
         pass
 
-    gallery_meta.delete_one({"_id": doc["_id"]})
+    parts["gallery_meta"].delete_one({"_id": doc["_id"]})
     return jsonify({"mensagem": "Foto excluída com sucesso."})
 
 
@@ -329,7 +352,7 @@ def listar_programas():
             ]
         }
 
-    docs = programs.find(filtro).sort("created_at", -1)
+    docs = get_mongo_parts()["programs"].find(filtro).sort("created_at", -1)
     return jsonify([serializar_programa(doc) for doc in docs])
 
 
@@ -361,7 +384,7 @@ def criar_programa():
         "created_at": agora,
         "updated_at": agora,
     }
-    resultado = programs.insert_one(doc)
+    resultado = get_mongo_parts()["programs"].insert_one(doc)
     doc["_id"] = resultado.inserted_id
     return jsonify(serializar_programa(doc)), 201
 
@@ -385,7 +408,7 @@ def editar_programa(programa_id):
         return jsonify({"erro": "Informe um link ou cole um conteúdo do programa."}), 400
 
     try:
-        resultado = programs.update_one(
+        resultado = get_mongo_parts()["programs"].update_one(
             {"_id": ObjectId(programa_id)},
             {
                 "$set": {
@@ -404,7 +427,7 @@ def editar_programa(programa_id):
     if resultado.matched_count == 0:
         return jsonify({"erro": "Programa não encontrado."}), 404
 
-    doc = programs.find_one({"_id": ObjectId(programa_id)})
+    doc = get_mongo_parts()["programs"].find_one({"_id": ObjectId(programa_id)})
     return jsonify(serializar_programa(doc))
 
 
@@ -415,7 +438,7 @@ def excluir_programa(programa_id):
         return auth_error
 
     try:
-        resultado = programs.delete_one({"_id": ObjectId(programa_id)})
+        resultado = get_mongo_parts()["programs"].delete_one({"_id": ObjectId(programa_id)})
     except Exception:
         return jsonify({"erro": "ID de programa inválido."}), 400
 
@@ -432,7 +455,7 @@ def validar_senha_programa(programa_id):
         return auth_error
 
     try:
-        doc = programs.find_one({"_id": ObjectId(programa_id)})
+        doc = get_mongo_parts()["programs"].find_one({"_id": ObjectId(programa_id)})
     except Exception:
         return jsonify({"erro": "ID de programa inválido."}), 400
 
@@ -468,7 +491,8 @@ def seed_programas():
     if auth_error:
         return auth_error
 
-    if programs.count_documents({}) > 0:
+    parts = get_mongo_parts()
+    if parts["programs"].count_documents({}) > 0:
         return jsonify({"mensagem": "A coleção de programas já possui registros."})
 
     agora = datetime.utcnow().isoformat()
@@ -492,15 +516,18 @@ def seed_programas():
             "updated_at": agora,
         },
     ]
-    programs.insert_many(exemplos)
+    parts["programs"].insert_many(exemplos)
     return jsonify({"mensagem": "Programas de exemplo criados."})
 
 
 if __name__ == "__main__":
     porta = int(os.getenv("PORT", 5000))
     try:
-        client.admin.command("ping")
+        parts = get_mongo_parts()
+        parts["client"].admin.command("ping")
         print("MongoDB conectado com sucesso.")
     except PyMongoError as e:
         print(f"Aviso: não foi possível validar a conexão com o MongoDB agora: {e}")
+    except Exception as e:
+        print(f"Aviso: configuração do ambiente: {e}")
     app.run(host="0.0.0.0", port=porta, debug=True)

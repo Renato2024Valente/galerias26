@@ -74,6 +74,26 @@ function showProgramContent(title, content) {
   toggleModal(modalConteudoPrograma, true);
 }
 
+
+async function readResponse(resp) {
+  const contentType = resp.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return await resp.json();
+  }
+  const raw = await resp.text();
+  throw new Error(raw || 'Resposta inválida do servidor.');
+}
+
+async function confirmSession(kind) {
+  await loadSession();
+  if (kind === 'admin' && !state.admin) {
+    throw new Error('A senha foi aceita, mas a sessão da gestão não ficou salva. Verifique SECRET_KEY e cookies do navegador.');
+  }
+  if (kind === 'programs' && !state.programs) {
+    throw new Error('A senha foi aceita, mas a sessão dos programas não ficou salva. Verifique SECRET_KEY e cookies do navegador.');
+  }
+}
+
 function updateUI() {
   statusProgramas.textContent = state.programs ? 'Liberados' : 'Bloqueados';
   statusGestao.textContent = state.admin ? 'Liberada' : 'Bloqueada';
@@ -88,7 +108,7 @@ function updateUI() {
 async function checkStatusBanco() {
   try {
     const resp = await fetch('/api/status');
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.mensagem || 'Falha ao conectar.');
     statusBanco.textContent = 'Conectado';
   } catch (error) {
@@ -99,7 +119,7 @@ async function checkStatusBanco() {
 
 async function loadSession() {
   const resp = await fetch('/api/session');
-  const data = await resp.json();
+  const data = await readResponse(resp);
   state.admin = !!data.admin_ok;
   state.programs = !!data.programs_ok;
   updateUI();
@@ -133,7 +153,7 @@ async function loadFotos(term = '') {
   try {
     const url = term ? `/api/galeria?q=${encodeURIComponent(term)}` : '/api/galeria';
     const resp = await fetch(url);
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao carregar galeria.');
     state.fotos = data;
     renderFotos(state.fotos);
@@ -195,7 +215,7 @@ async function loadProgramas(term = '') {
   try {
     const url = term ? `/api/programas?q=${encodeURIComponent(term)}` : '/api/programas';
     const resp = await fetch(url);
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao carregar programas.');
     state.programas = data;
     renderProgramas(state.programas);
@@ -208,7 +228,7 @@ async function deleteFoto(id) {
   if (!confirm('Deseja excluir esta foto?')) return;
   try {
     const resp = await fetch(`/api/galeria/${id}`, { method: 'DELETE' });
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao excluir foto.');
     showNotice(mensagemGaleria, data.mensagem);
     await loadFotos(buscaGaleria.value.trim());
@@ -221,7 +241,7 @@ async function deletePrograma(id) {
   if (!confirm('Deseja excluir este programa?')) return;
   try {
     const resp = await fetch(`/api/programas/${id}`, { method: 'DELETE' });
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao excluir programa.');
     showNotice(mensagemProgramas, data.mensagem);
     resetProgramaForm();
@@ -237,12 +257,13 @@ async function authPrograms(password) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ senha: password }),
   });
-  const data = await resp.json();
+  const data = await readResponse(resp);
   if (!resp.ok) throw new Error(data.erro || 'Senha inválida.');
   state.programs = true;
   updateUI();
+  await confirmSession('programs');
   await loadProgramas();
-  showNotice(mensagemProgramas, data.mensagem);
+  showNotice(mensagemProgramas, data.mensagem || 'Área de programas liberada.');
 }
 
 async function authAdmin(password) {
@@ -251,13 +272,14 @@ async function authAdmin(password) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ senha: password }),
   });
-  const data = await resp.json();
+  const data = await readResponse(resp);
   if (!resp.ok) throw new Error(data.erro || 'Senha inválida.');
   state.admin = true;
   state.programs = true;
   updateUI();
+  await confirmSession('admin');
   await Promise.all([loadFotos(buscaGaleria.value.trim()), loadProgramas(buscaProgramas.value.trim())]);
-  showNotice(mensagemProgramas, data.mensagem);
+  showNotice(mensagemProgramas, data.mensagem || 'Gestão liberada com sucesso.');
 }
 
 async function openPrograma(item) {
@@ -273,7 +295,7 @@ async function openPrograma(item) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ senha: '' }),
   });
-  const data = await resp.json();
+  const data = await readResponse(resp);
   if (!resp.ok) {
     showNotice(mensagemProgramas, data.erro || 'Erro ao abrir programa.', true);
     return;
@@ -318,6 +340,7 @@ formSenhaProgramas.addEventListener('submit', async (event) => {
     toggleModal(modalSenhaProgramas, false);
   } catch (error) {
     showNotice(mensagemProgramas, error.message, true);
+    console.error('Falha ao autenticar programas:', error);
   }
 });
 
@@ -329,6 +352,7 @@ formSenhaGestao.addEventListener('submit', async (event) => {
     toggleModal(modalSenhaGestao, false);
   } catch (error) {
     showNotice(mensagemProgramas, error.message, true);
+    console.error('Falha ao autenticar gestão:', error);
   }
 });
 
@@ -340,7 +364,7 @@ formSenhaIndividual.addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ senha: senhaIndividualPrograma.value.trim() }),
     });
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Senha inválida.');
     toggleModal(modalSenhaIndividual, false);
     formSenhaIndividual.reset();
@@ -372,7 +396,7 @@ formGaleria.addEventListener('submit', async (event) => {
     [...files].forEach(file => formData.append('imagens', file));
 
     const resp = await fetch('/api/galeria', { method: 'POST', body: formData });
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao enviar imagens.');
 
     formGaleria.reset();
@@ -403,7 +427,7 @@ formPrograma.addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao salvar programa.');
 
     showNotice(mensagemProgramas, id ? 'Programa atualizado com sucesso.' : 'Programa salvo com sucesso.');
@@ -417,7 +441,7 @@ formPrograma.addEventListener('submit', async (event) => {
 document.getElementById('btnCriarExemplos').addEventListener('click', async () => {
   try {
     const resp = await fetch('/api/seed', { method: 'POST' });
-    const data = await resp.json();
+    const data = await readResponse(resp);
     if (!resp.ok) throw new Error(data.erro || 'Erro ao criar exemplos.');
     showNotice(mensagemProgramas, data.mensagem);
     await loadProgramas();
